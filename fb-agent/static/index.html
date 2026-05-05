@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>D31 Facebook Marketing Agent</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: 'Segoe UI', system-ui, sans-serif; }
+    .phase-locked { opacity: 0.45; pointer-events: none; }
+    .spinner {
+      display: inline-block; width: 18px; height: 18px;
+      border: 3px solid #e5e7eb; border-top-color: #1d4ed8;
+      border-radius: 50%; animation: spin 0.7s linear infinite;
+      vertical-align: middle; margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen py-10 px-4">
+
+  <div class="max-w-2xl mx-auto space-y-6">
+
+    <!-- Header -->
+    <div class="text-center">
+      <h1 class="text-2xl font-bold text-gray-800">D31 Facebook Marketing Agent</h1>
+      <p class="text-gray-500 text-sm mt-1">District 31 Toastmasters</p>
+    </div>
+
+    <!-- ── PHASE 1 ── -->
+    <div class="bg-white rounded-2xl shadow p-6 space-y-4">
+      <div class="flex items-center gap-3">
+        <span class="bg-blue-600 text-white text-sm font-semibold px-3 py-1 rounded-full">Phase 1</span>
+        <h2 class="text-lg font-semibold text-gray-800">Get Club Details from Google Sheet</h2>
+      </div>
+
+      <button id="btn-phase1"
+        onclick="runPhase1()"
+        class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition">
+        Run Phase 1 — Load Clubs
+      </button>
+
+      <!-- Club selector (hidden until Phase 1 succeeds) -->
+      <div id="club-selector" class="hidden space-y-3">
+        <label class="block text-sm font-medium text-gray-700">Select a club to promote:</label>
+        <select id="club-select"
+          onchange="onClubSelected()"
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <option value="">— Choose a club —</option>
+        </select>
+
+        <!-- Club detail card -->
+        <div id="club-card" class="hidden bg-gray-50 rounded-xl p-4 text-sm space-y-1 text-gray-700">
+          <div><span class="font-semibold">Club:</span> <span id="card-club"></span></div>
+          <div><span class="font-semibold">Area / Division:</span> <span id="card-area"></span></div>
+          <div><span class="font-semibold">Meeting:</span> <span id="card-time"></span></div>
+          <div><span class="font-semibold">Location:</span> <span id="card-address"></span></div>
+          <div><span class="font-semibold">Zeffy:</span> <span id="card-zeffy"></span></div>
+        </div>
+
+        <!-- Copy for Zeffy button -->
+        <button id="btn-copy"
+          onclick="copyForZeffy()"
+          class="hidden w-full bg-yellow-400 hover:bg-yellow-500 text-gray-900 font-semibold py-2 rounded-xl transition text-sm">
+          📋 Copy Details for Zeffy
+        </button>
+        <p id="copy-confirm" class="hidden text-green-600 text-sm text-center">✅ Copied to clipboard!</p>
+      </div>
+
+      <div id="phase1-error" class="hidden text-red-600 text-sm bg-red-50 rounded-lg p-3"></div>
+    </div>
+
+    <!-- ── HUMAN PAUSE BANNER ── -->
+    <div id="zeffy-banner" class="hidden bg-yellow-50 border border-yellow-300 rounded-2xl p-5 space-y-3">
+      <p class="text-yellow-800 font-semibold text-sm">⏸ Human step required</p>
+      <p class="text-yellow-700 text-sm">
+        Go to <a href="https://www.zeffy.com" target="_blank" class="underline font-medium">zeffy.com</a>,
+        create a registration event using the details you copied above, then paste the event URL below.
+      </p>
+      <input id="zeffy-url" type="url" placeholder="https://www.zeffy.com/en-US/ticketing/..."
+        oninput="onZeffyUrlInput()"
+        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
+    </div>
+
+    <!-- ── PHASE 2 ── -->
+    <div id="phase2-panel" class="bg-white rounded-2xl shadow p-6 space-y-4 phase-locked">
+      <div class="flex items-center gap-3">
+        <span class="bg-purple-600 text-white text-sm font-semibold px-3 py-1 rounded-full">Phase 2</span>
+        <h2 class="text-lg font-semibold text-gray-800">Generate &amp; Post to Facebook</h2>
+      </div>
+
+      <button id="btn-phase2"
+        onclick="runPhase2()"
+        class="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 rounded-xl transition">
+        Run Phase 2 — Generate Flyer &amp; Post
+      </button>
+
+      <!-- Step status indicators -->
+      <div id="phase2-steps" class="hidden space-y-2 text-sm">
+        <div class="flex items-center gap-2">
+          <span id="step3-icon">⏳</span>
+          <span class="text-gray-600">Step 3 — QR Code</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span id="step4-icon">⏳</span>
+          <span class="text-gray-600">Step 4 — Flyer Image</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span id="step5-icon">⏳</span>
+          <span class="text-gray-600">Step 5 — Facebook Post</span>
+        </div>
+      </div>
+
+      <!-- Flyer preview -->
+      <div id="flyer-preview" class="hidden">
+        <p class="text-sm font-medium text-gray-700 mb-2">Flyer preview:</p>
+        <img id="flyer-img" src="" alt="Generated flyer" class="rounded-xl w-full border border-gray-200 shadow" />
+      </div>
+
+      <!-- Facebook link -->
+      <div id="fb-link-wrap" class="hidden">
+        <a id="fb-link" href="#" target="_blank"
+          class="block text-center bg-blue-50 hover:bg-blue-100 text-blue-700 font-medium py-2 rounded-xl text-sm transition">
+          🔗 View Facebook Post
+        </a>
+      </div>
+
+      <div id="phase2-error" class="hidden text-red-600 text-sm bg-red-50 rounded-lg p-3"></div>
+    </div>
+
+  </div><!-- /max-w-2xl -->
+
+<script>
+  // ── State ──────────────────────────────────────────────────────────────────
+  let allClubs   = [];
+  let activeClub = null;
+
+  // ── Phase 1 ───────────────────────────────────────────────────────────────
+  async function runPhase1() {
+    const btn = document.getElementById('btn-phase1');
+    btn.innerHTML = '<span class="spinner"></span>Loading clubs…';
+    btn.disabled = true;
+    document.getElementById('phase1-error').classList.add('hidden');
+    document.getElementById('club-selector').classList.add('hidden');
+
+    try {
+      const resp = await fetch('/api/phase1');
+      const data = await resp.json();
+      if (!data.ok) throw new Error(data.error);
+
+      allClubs = data.clubs;
+      populateClubDropdown(allClubs);
+
+      btn.innerHTML = '✅ Clubs loaded — select one below';
+      document.getElementById('club-selector').classList.remove('hidden');
+
+    } catch (err) {
+      btn.innerHTML = 'Run Phase 1 — Load Clubs';
+      btn.disabled = false;
+      showError('phase1-error', err.message);
+    }
+  }
+
+  function populateClubDropdown(clubs) {
+    const sel = document.getElementById('club-select');
+    sel.innerHTML = '<option value="">— Choose a club —</option>';
+    clubs.forEach((c, i) => {
+      const opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = c.club_name || `Club ${i + 1}`;
+      sel.appendChild(opt);
+    });
+  }
+
+  function onClubSelected() {
+    const idx = document.getElementById('club-select').value;
+    const card = document.getElementById('club-card');
+    const copyBtn = document.getElementById('btn-copy');
+    const banner = document.getElementById('zeffy-banner');
+
+    if (idx === '') {
+      card.classList.add('hidden');
+      copyBtn.classList.add('hidden');
+      banner.classList.add('hidden');
+      lockPhase2();
+      return;
+    }
+
+    activeClub = allClubs[parseInt(idx)];
+
+    document.getElementById('card-club').textContent    = activeClub.club_name;
+    document.getElementById('card-area').textContent    = `Area ${activeClub.area} / Division ${activeClub.division}`;
+    document.getElementById('card-time').textContent    = activeClub.day_time;
+    document.getElementById('card-address').textContent = activeClub.address;
+    document.getElementById('card-zeffy').innerHTML     = activeClub.zeffy_link
+      ? `<a href="${activeClub.zeffy_link}" target="_blank" class="text-blue-600 underline">Existing link ✅</a>`
+      : '<span class="text-yellow-600">Not set — create in Zeffy</span>';
+
+    card.classList.remove('hidden');
+    copyBtn.classList.remove('hidden');
+    document.getElementById('copy-confirm').classList.add('hidden');
+
+    // Show Zeffy banner; if link already exists, pre-fill it
+    banner.classList.remove('hidden');
+    if (activeClub.zeffy_link) {
+      document.getElementById('zeffy-url').value = activeClub.zeffy_link;
+      onZeffyUrlInput();
+    } else {
+      document.getElementById('zeffy-url').value = '';
+      lockPhase2();
+    }
+  }
+
+  function copyForZeffy() {
+    if (!activeClub) return;
+    const text =
+      `Club: ${activeClub.club_name}\n` +
+      `Meeting Day/Time: ${activeClub.day_time}\n` +
+      `Location: ${activeClub.address}`;
+    navigator.clipboard.writeText(text).then(() => {
+      document.getElementById('copy-confirm').classList.remove('hidden');
+      setTimeout(() => document.getElementById('copy-confirm').classList.add('hidden'), 3000);
+    });
+  }
+
+  // ── Zeffy URL input ────────────────────────────────────────────────────────
+  function onZeffyUrlInput() {
+    const url = document.getElementById('zeffy-url').value.trim();
+    if (url.startsWith('http')) {
+      unlockPhase2();
+    } else {
+      lockPhase2();
+    }
+  }
+
+  function lockPhase2() {
+    document.getElementById('phase2-panel').classList.add('phase-locked');
+  }
+  function unlockPhase2() {
+    document.getElementById('phase2-panel').classList.remove('phase-locked');
+  }
+
+  // ── Phase 2 ───────────────────────────────────────────────────────────────
+  async function runPhase2() {
+    const btn      = document.getElementById('btn-phase2');
+    const steps    = document.getElementById('phase2-steps');
+    const errDiv   = document.getElementById('phase2-error');
+    const zeffyUrl = document.getElementById('zeffy-url').value.trim();
+
+    if (!activeClub || !zeffyUrl) return;
+
+    btn.innerHTML = '<span class="spinner"></span>Running…';
+    btn.disabled  = true;
+    steps.classList.remove('hidden');
+    errDiv.classList.add('hidden');
+    document.getElementById('flyer-preview').classList.add('hidden');
+    document.getElementById('fb-link-wrap').classList.add('hidden');
+
+    setStepIcon('step3-icon', 'running');
+    setStepIcon('step4-icon', 'waiting');
+    setStepIcon('step5-icon', 'waiting');
+
+    try {
+      const resp = await fetch('/api/phase2', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ club: activeClub, zeffy_url: zeffyUrl }),
+      });
+      const data = await resp.json();
+      if (!data.ok) throw new Error(data.error);
+
+      setStepIcon('step3-icon', 'done');
+      setStepIcon('step4-icon', 'done');
+
+      // Show flyer preview
+      const img = document.getElementById('flyer-img');
+      img.src = `data:image/png;base64,${data.flyer_b64}`;
+      document.getElementById('flyer-preview').classList.remove('hidden');
+
+      setStepIcon('step5-icon', 'done');
+
+      // Show Facebook link
+      const fbLink = document.getElementById('fb-link');
+      fbLink.href = data.facebook_url;
+      document.getElementById('fb-link-wrap').classList.remove('hidden');
+
+      btn.innerHTML = '✅ Posted to Facebook!';
+
+    } catch (err) {
+      setStepIcon('step3-icon', 'error');
+      setStepIcon('step4-icon', 'error');
+      setStepIcon('step5-icon', 'error');
+      btn.innerHTML = 'Run Phase 2 — Generate Flyer &amp; Post';
+      btn.disabled  = false;
+      showError('phase2-error', err.message);
+    }
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function setStepIcon(id, state) {
+    const el = document.getElementById(id);
+    el.textContent = { running: '⏳', done: '✅', error: '❌', waiting: '·' }[state] || '·';
+  }
+
+  function showError(id, msg) {
+    const el = document.getElementById(id);
+    el.textContent = `Error: ${msg}`;
+    el.classList.remove('hidden');
+  }
+</script>
+</body>
+</html>

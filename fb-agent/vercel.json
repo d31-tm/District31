@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/*.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "static/**",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    { "src": "/api/phase1", "dest": "/api/phase1.py" },
+    { "src": "/api/phase2", "dest": "/api/phase2.py" },
+    { "src": "/(.*)",       "dest": "/static/$1" },
+    { "src": "/",           "dest": "/static/index.html" }
+  ]
+}
