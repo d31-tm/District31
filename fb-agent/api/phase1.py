@@ -7,16 +7,18 @@ Vercel environment variables required:
   GOOGLE_SHEETS_API_KEY  — Google Sheets API key (restricted to Sheets API)
   GOOGLE_SHEET_ID        — Sheet ID from the URL between /d/ and /edit
 
-Column mapping (0-indexed):
-  A (0): Area #
-  B (1): Division Letter
-  C (2): Club Name
-  D (3): Day/Time
-  E (4): Location/Address
-  F (5): Zeffy Link (may be blank)
-
-⚠ Verify column headers against the live sheet before deploying.
-  If columns shift, update the indices in _parse_row() below.
+Confirmed column mapping from the live 30 Club Program tab (0-indexed):
+  A (0):  Area #
+  B (1):  Division Letter
+  C (2):  AD Last Name         skip
+  D (3):  AD First Name        skip
+  E (4):  AD Email             skip
+  F (5):  Recommended Club     skip
+  G (6):  Area Director Choice = club name to promote
+  H (7):  Free Toast Host link skip
+  I (8):  Day and Time
+  J (9):  Address
+  K (10): Zeffy Link (may be blank)
 """
 
 import os
@@ -25,14 +27,14 @@ import urllib.request
 import urllib.parse
 from http.server import BaseHTTPRequestHandler
 
-# ── Constants ────────────────────────────────────────────────────────────────
+# -- Constants ----------------------------------------------------------------
 
-SHEET_TAB = "30 Club Program"  # Exact tab name — must match the live sheet
-SHEET_RANGE = f"'{SHEET_TAB}'!A2:F100"  # A2 skips the header row; F100 is generous
+SHEET_TAB = "30 Club Program"
+SHEET_RANGE = f"'{SHEET_TAB}'!A2:K100"
 SHEETS_BASE = "https://sheets.googleapis.com/v4/spreadsheets"
 
 
-# ── Row parser ───────────────────────────────────────────────────────────────
+# -- Row parser ----------------------------------------------------------------
 
 def _parse_row(row: list) -> dict:
     """Map a raw Sheets API row (list of cell values) to a club object."""
@@ -40,25 +42,21 @@ def _parse_row(row: list) -> dict:
         return row[i].strip() if i < len(row) and row[i] else ""
 
     return {
-        "area":       cell(0),
-        "division":   cell(1),
-        "club_name":  cell(2),
-        "day_time":   cell(3),
-        "address":    cell(4),
-        "zeffy_link": cell(5) or None,  # None means human must create Zeffy event
+        "area":       cell(0),   # Column A
+        "division":   cell(1),   # Column B
+        "club_name":  cell(6),   # Column G -- Area Director Choice
+        "day_time":   cell(8),   # Column I -- Day and Time
+        "address":    cell(9),   # Column J -- Address
+        "zeffy_link": cell(10) or None,  # Column K -- Zeffy Link
     }
 
 
-# ── Google Sheets fetch ───────────────────────────────────────────────────────
+# -- Google Sheets fetch -------------------------------------------------------
 
 def fetch_clubs() -> list:
     api_key  = os.environ["GOOGLE_SHEETS_API_KEY"]
     sheet_id = os.environ["GOOGLE_SHEET_ID"]
 
-    params = urllib.parse.urlencode({
-        "range": SHEET_RANGE,
-        "key":   api_key,
-    })
     url = f"{SHEETS_BASE}/{sheet_id}/values/{urllib.parse.quote(SHEET_RANGE)}?key={api_key}"
 
     req = urllib.request.Request(url)
@@ -66,16 +64,15 @@ def fetch_clubs() -> list:
         data = json.loads(resp.read().decode())
 
     rows = data.get("values", [])
-    clubs = [_parse_row(row) for row in rows if any(row)]  # skip blank rows
+    clubs = [_parse_row(row) for row in rows if any(row)]
     return clubs
 
 
-# ── Vercel handler ────────────────────────────────────────────────────────────
+# -- Vercel handler ------------------------------------------------------------
 
 class handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
-        # CORS — allow the Vercel-hosted frontend to call this endpoint
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -92,7 +89,6 @@ class handler(BaseHTTPRequestHandler):
         self.wfile.write(body.encode())
 
     def do_OPTIONS(self):
-        # Pre-flight CORS
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
