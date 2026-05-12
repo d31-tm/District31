@@ -204,6 +204,32 @@ def wrap_address(draw, address: str, font, max_width: int):
     return address, ""
 
 
+def fit_font(draw, text: str, max_width: int, path: Path, start_size: int, min_size: int = 20):
+    """Find largest font size where text fits within max_width."""
+    for size in range(start_size, min_size - 1, -2):
+        font = load_font(path, size)
+        if text_width(draw, text, font) <= max_width:
+            return font, size
+    return load_font(path, min_size), min_size
+
+
+def wrap_text_lines(draw, text: str, font, max_width: int) -> list:
+    """Wrap text into lines that fit max_width, returns list of line strings."""
+    words = text.split()
+    lines, current = [], ""
+    for word in words:
+        test = f"{current} {word}".strip()
+        if text_width(draw, test, font) <= max_width:
+            current = test
+        else:
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
 # -- Step 3: QR Code -----------------------------------------------------------
 
 def generate_qr(registration_url: str) -> Image.Image:
@@ -256,26 +282,36 @@ def generate_flyer(club: dict, registration_url: str, qr_img: Image.Image) -> by
     day_part, time_part = split_day_time(club["day_time"])
     draw.text((DAY_XY[0], day_y), day_part, font=f_day, fill=COLOR_DARK)
 
-    # ── Small bubble: Time ──
+    # ── Small bubble: Time (dynamic font size) ──
     if time_part:
-        draw.text(TIME_XY, time_part, font=f_time, fill=COLOR_DARK)
+        f_time_dyn, _ = fit_font(draw, time_part, 350, FONT_REGULAR, TIME_FONT_SIZE, min_size=20)
+        draw.text(TIME_XY, time_part, font=f_time_dyn, fill=COLOR_DARK)
 
-    # ── Teal banner: City after "WE CAN HELP" ──
+    # ── Teal banner: City after "WE CAN HELP" (dynamic font size) ──
     city = extract_city(club["address"])
     if city:
-        draw.text(CITY_XY, f", {city.upper()}", font=f_city, fill=COLOR_WHITE)
+        city_str = f", {city.upper()}"
+        f_city_dyn, _ = fit_font(draw, city_str, 600, FONT_BOLD, CITY_FONT_SIZE, min_size=30)
+        draw.text(CITY_XY, city_str, font=f_city_dyn, fill=COLOR_WHITE)
 
     # ── Body text: Club name after "Come join" ──
     # Template has baked-in "!" after the blank zone — draw club name at consistent size
     draw.text(BODY_CLUB_XY, club["club_name"], font=f_body, fill=COLOR_WHITE)
 
-    # ── Bottom section: Day/time and address (wrapped if long) ──
+    # ── Bottom section: Day/time and address (dynamic font + multi-line) ──
     draw.text(BOTTOM_DATETIME_XY, club["day_time"], font=f_bottom, fill=COLOR_GOLD)
     display_address = clean_address(club["address"])
-    addr_line1, addr_line2 = wrap_address(draw, display_address, f_bottom, BOTTOM_TEXT_MAX_W)
-    draw.text(BOTTOM_ADDRESS_XY,  addr_line1, font=f_bottom, fill=COLOR_GOLD)
-    if addr_line2:
-        draw.text(BOTTOM_ADDRESS2_XY, addr_line2, font=f_bottom, fill=COLOR_GOLD)
+    # Find font size where address wraps to at most 3 lines
+    addr_font = f_bottom
+    addr_lines = []
+    for size in range(BOTTOM_FONT_SIZE, 19, -2):
+        addr_font = load_font(FONT_BOLD, size)
+        addr_lines = wrap_text_lines(draw, display_address, addr_font, BOTTOM_TEXT_MAX_W)
+        if len(addr_lines) <= 3:
+            break
+    addr_y_positions = [BOTTOM_ADDRESS_XY[1], BOTTOM_ADDRESS2_XY[1], BOTTOM_ADDRESS2_XY[1] + 80]
+    for i, line in enumerate(addr_lines[:3]):
+        draw.text((BOTTOM_ADDRESS_XY[0], addr_y_positions[i]), line, font=addr_font, fill=COLOR_GOLD)
 
     # ── QR code ──
     flyer.paste(qr_img, QR_XY)
