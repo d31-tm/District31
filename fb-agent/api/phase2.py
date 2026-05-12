@@ -26,7 +26,7 @@ TEXT COORDINATES — calibrated for 1824x2358 px template
   CITY_XY            = (1150, 1020)
   CITY_FONT_SIZE     = 90
   BODY_CLUB_XY       = (278, 1178)
-  BODY_CLUB_FONT_SIZE = 38
+  BODY_CLUB_FONT_SIZE = 28
   BOTTOM_DATETIME_XY = (150, 1910)
   BOTTOM_ADDRESS_XY  = (150, 1990)
   BOTTOM_ADDRESS2_XY = (150, 2070)
@@ -71,7 +71,7 @@ TIME_FONT_SIZE      = 50
 CITY_XY             = (1150, 1020)
 CITY_FONT_SIZE      = 90
 BODY_CLUB_XY        = (278, 1178)
-BODY_CLUB_FONT_SIZE = 38
+BODY_CLUB_FONT_SIZE = 28
 BOTTOM_DATETIME_XY  = (150, 1910)
 BOTTOM_ADDRESS_XY   = (150, 1990)
 BOTTOM_ADDRESS2_XY  = (150, 2070)
@@ -106,7 +106,22 @@ def text_width(draw, text: str, font) -> int:
 
 
 def extract_city(address: str) -> str:
-    """Extract city from 'Street, City, ST ZIP' format."""
+    """
+    Extract city from address string.
+    Handles formats like:
+      '6 Chestnut Street, Amesbury, MA 01913'           -> 'Amesbury'
+      '2 Bridgeview Circle, Unit 8 Tyngsboro, MA 01879' -> 'Tyngsboro'
+    Finds the part just before the state abbreviation,
+    stripping any unit/suite prefix.
+    """
+    import re as _re
+    match = _re.search(r',\s*([^,]+),\s*[A-Z]{2}\s+\d{5}', address)
+    if match:
+        city_part = match.group(1).strip()
+        unit_match = _re.match(r'(?:unit|suite|ste|apt|#)\s*\w+\s+(.+)', city_part, _re.IGNORECASE)
+        if unit_match:
+            return unit_match.group(1).strip()
+        return city_part
     parts = [p.strip() for p in address.split(",")]
     if len(parts) >= 2:
         return parts[-2].strip()
