@@ -105,26 +105,54 @@ def text_width(draw, text: str, font) -> int:
     return bbox[2] - bbox[0]
 
 
+def clean_address(address: str) -> str:
+    """
+    Normalize address for display:
+    - Collapse newlines and extra spaces
+    - Remove United States / USA suffixes
+    - Strip virtual/zoom references
+    - Expand parentheticals
+    """
+    normalized = re.sub(r'\s+', ' ', address).strip()
+    normalized = re.sub(r',?\s*United States\s*$', '', normalized, flags=re.IGNORECASE).strip()
+    normalized = re.sub(r',?\s*USA\s*$', '', normalized, flags=re.IGNORECASE).strip()
+    normalized = re.sub(r',?\s*or\s+Virtual\s+via\s+Zoom\s*$', '', normalized, flags=re.IGNORECASE).strip()
+    normalized = re.sub(r',?\s*or\s+Virtual\s*$', '', normalized, flags=re.IGNORECASE).strip()
+    normalized = re.sub(r'^\s*Zoom\s*', '', normalized, flags=re.IGNORECASE).strip()
+    normalized = re.sub(r'^\s*Virtual\s*', '', normalized, flags=re.IGNORECASE).strip()
+    normalized = re.sub(r'\([^)]+\)', lambda m: m.group(0)[1:-1], normalized).strip()
+    normalized = re.sub(r'\s+', ' ', normalized).strip()
+    return normalized
+
+
 def extract_city(address: str) -> str:
     """
-    Extract city from address string.
-    Handles formats like:
-      '6 Chestnut Street, Amesbury, MA 01913'           -> 'Amesbury'
-      '2 Bridgeview Circle, Unit 8 Tyngsboro, MA 01879' -> 'Tyngsboro'
-    Finds the part just before the state abbreviation,
-    stripping any unit/suite prefix.
+    Extract city from various address formats including:
+      '6 Chestnut Street, Amesbury, MA 01913'
+      '2 Bridgeview Circle, Unit 8 Tyngsboro, MA 01879'
+      'F. A. Day Middle School\n21 Minot Place Newton, MA 02460 United States'
+    Finds the word(s) immediately before the state+zip pattern.
     """
-    import re as _re
-    match = _re.search(r',\s*([^,]+),\s*[A-Z]{2}\s+\d{5}', address)
+    normalized = clean_address(address)
+    match = re.search(r'([A-Za-z][A-Za-z\s\.]+?),?\s+([A-Z]{2})\s+(\d{5})', normalized)
     if match:
-        city_part = match.group(1).strip()
-        unit_match = _re.match(r'(?:unit|suite|ste|apt|#)\s*\w+\s+(.+)', city_part, _re.IGNORECASE)
+        candidate = match.group(1).strip()
+        words = candidate.split()
+        if len(words) > 2:
+            street_suffixes = {'street','st','avenue','ave','road','rd','drive','dr',
+                               'place','pl','circle','cir','way','blvd','lane','ln',
+                               'court','ct','school','middle','high','center'}
+            if words[-2].lower() in street_suffixes:
+                return words[-1]
+            return " ".join(words[-2:])
+        return candidate
+    parts = [p.strip() for p in normalized.split(",")]
+    if len(parts) >= 2:
+        city_part = parts[-2].strip()
+        unit_match = re.match(r'(?:unit|suite|ste|apt|#)\s*\w+\s+(.+)', city_part, re.IGNORECASE)
         if unit_match:
             return unit_match.group(1).strip()
         return city_part
-    parts = [p.strip() for p in address.split(",")]
-    if len(parts) >= 2:
-        return parts[-2].strip()
     return ""
 
 
@@ -243,8 +271,9 @@ def generate_flyer(club: dict, registration_url: str, qr_img: Image.Image) -> by
 
     # ── Bottom section: Day/time and address (wrapped if long) ──
     draw.text(BOTTOM_DATETIME_XY, club["day_time"], font=f_bottom, fill=COLOR_GOLD)
-    addr_line1, addr_line2 = wrap_address(draw, club["address"], f_bottom, BOTTOM_TEXT_MAX_W)
-    draw.text(BOTTOM_ADDRESS_XY, addr_line1, font=f_bottom, fill=COLOR_GOLD)
+    display_address = clean_address(club["address"])
+    addr_line1, addr_line2 = wrap_address(draw, display_address, f_bottom, BOTTOM_TEXT_MAX_W)
+    draw.text(BOTTOM_ADDRESS_XY,  addr_line1, font=f_bottom, fill=COLOR_GOLD)
     if addr_line2:
         draw.text(BOTTOM_ADDRESS2_XY, addr_line2, font=f_bottom, fill=COLOR_GOLD)
 
