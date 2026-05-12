@@ -1,6 +1,6 @@
 """
 D31 Facebook Marketing Agent — Phase 2
-Receives club data + Zeffy URL, then:
+Receives club data + registration URL, then:
   Step 3 — Generates a QR code PNG (Python qrcode library)
   Step 4 — Composites a flyer PNG (Python Pillow onto flyer_template.png)
   Step 5 — Posts the flyer to the District 31 Facebook Page (Graph API)
@@ -9,23 +9,30 @@ Vercel environment variables required:
   FACEBOOK_PAGE_TOKEN  — Long-lived Page Access Token (~60-day expiry)
   FACEBOOK_PAGE_ID     — Numeric Facebook Page ID
 
-Static assets (committed to repo, served from /static/):
-  flyer_template.png   — Base flyer design
-  Montserrat-Bold.ttf  — Font for club name and date/time
-  Montserrat-Regular.ttf — Font for address and body text
+Static assets (committed to repo under fb-agent/static/):
+  flyer_template.png      — 1824x2358 blank template (Gemini/Canva export)
+  Montserrat-Bold.ttf     — Font for club name, day, city, bottom text
+  Montserrat-Regular.ttf  — Font for body text and time
 
-TEXT COORDINATES — pixel positions on flyer_template.png
-  Recalibrate these if the template image dimensions or layout change.
+TEXT COORDINATES — calibrated for 1824x2358 px template
+  If template dimensions or layout ever change, recalibrate these.
 
-  CLUB_NAME_XY       = (120, 340)
-  DATETIME_XY        = (120, 500)
-  BOTTOM_DATETIME_XY = (120, 1050)
-  BOTTOM_ADDRESS_XY  = (120, 1100)
-  QR_XY              = (780, 1000)
+  BUBBLE_CENTER_X    = 620   -- center x of large yellow bubble
+  CLUB_NAME_L1_Y     = 390   -- "CLIPPER CITY" line
+  CLUB_NAME_L2_Y     = 490   -- "CLUB" line (if wraps)
+  DAY_XY             = (350, 610)
+  TIME_XY            = (950, 700)
+  CITY_XY            = (1150, 1020)  -- after "WE CAN HELP"
+  BODY_CLUB_XY       = (278, 1178)   -- after "Come join " in body text
+  BOTTOM_DATETIME_XY = (150, 1910)
+  BOTTOM_ADDRESS_XY  = (150, 2000)
+  QR_XY              = (1420, 1950)  -- top-left of QR paste zone
+  QR_SIZE            = 350
 """
 
 import os
 import io
+import re
 import json
 import base64
 import traceback
@@ -34,6 +41,10 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
+import qrcode
+from qrcode.constants import ERROR_CORRECT_H
+from PIL import Image, ImageDraw, ImageFont
+
 # -- Asset paths ---------------------------------------------------------------
 
 STATIC_DIR    = Path(__file__).parent.parent / "static"
@@ -41,41 +52,104 @@ TEMPLATE_PATH = STATIC_DIR / "flyer_template.png"
 FONT_BOLD     = STATIC_DIR / "Montserrat-Bold.ttf"
 FONT_REGULAR  = STATIC_DIR / "Montserrat-Regular.ttf"
 
-# -- Layout constants ----------------------------------------------------------
+# -- Layout constants (1824x2358 template) -------------------------------------
 
-CLUB_NAME_XY       = (120, 340)
-DATETIME_XY        = (120, 500)
-BOTTOM_DATETIME_XY = (120, 1050)
-BOTTOM_ADDRESS_XY  = (120, 1100)
-QR_XY              = (780, 1000)
-QR_SIZE            = 250
-MAX_TEXT_WIDTH     = 600
+BUBBLE_CENTER_X    = 620
+CLUB_NAME_L1_Y     = 390
+CLUB_NAME_L2_Y     = 490
+CLUB_NAME_FONT_SIZE = 90
+DAY_XY             = (350, 610)
+DAY_FONT_SIZE      = 65
+TIME_XY            = (950, 700)
+TIME_FONT_SIZE     = 50
+CITY_XY            = (1150, 1020)
+CITY_FONT_SIZE     = 90
+BODY_CLUB_XY       = (278, 1178)
+BODY_CLUB_FONT_SIZE = 38
+BOTTOM_DATETIME_XY = (150, 1910)
+BOTTOM_ADDRESS_XY  = (150, 2000)
+BOTTOM_FONT_SIZE   = 66
+QR_XY              = (1420, 1950)
+QR_SIZE            = 350
 
-CLUB_NAME_FONT_SIZE   = 52
-DATETIME_FONT_SIZE    = 36
-BOTTOM_TEXT_FONT_SIZE = 28
+# -- Colors --------------------------------------------------------------------
 
-COLOR_DARK = (30,  30,  30)
-COLOR_GOLD = (212, 175, 55)
+COLOR_DARK   = (30,  30,  30)
+COLOR_WHITE  = (255, 255, 255)
+COLOR_GOLD   = (212, 175, 55)
+
+# -- Facebook ------------------------------------------------------------------
 
 FB_API_VERSION = "v18.0"
 FB_GRAPH_BASE  = f"https://graph.facebook.com/{FB_API_VERSION}"
 
 
+# -- Helpers -------------------------------------------------------------------
+
+def load_font(path: Path, size: int) -> ImageFont.FreeTypeFont:
+    if path.exists():
+        return ImageFont.truetype(str(path), size)
+    return ImageFont.load_default(size=size)
+
+
+def extract_city(address: str) -> str:
+    """Extract city from address string e.g. '6 Chestnut St, Amesbury, MA 01913' -> 'Amesbury'"""
+    parts = [p.strip() for p in address.split(",")]
+    if len(parts) >= 2:
+        # Second-to-last part is typically the city
+        return parts[-2].strip()
+    return ""
+
+
+def split_day_time(day_time: str):
+    """
+    Split a day/time string into (day_part, time_part).
+    Examples:
+      'Friday at 12:00 pm'              -> ('Friday', '12:00 pm')
+      '2nd & 4th Wednesday 6:45 pm'     -> ('2nd & 4th Wednesday', '6:45 pm')
+      'Thursday 6:15 PM to 7:45 PM'     -> ('Thursday', '6:15 PM to 7:45 PM')
+      '2nd and 4th Wednesday 12:00 pm - 1:00 pm' -> ('2nd and 4th Wednesday', '12:00 pm - 1:00 pm')
+    """
+    pattern = r'(\d{1,2}:\d{2}\s*(?:am|pm|AM|PM|a\.m\.|p\.m\.)(?:\s*(?:to|-)\s*\d{1,2}:\d{2}\s*(?:am|pm|AM|PM|a\.m\.|p\.m\.)?)?)'
+    match = re.search(pattern, day_time, re.IGNORECASE)
+    if match:
+        time_part = match.group(1).strip()
+        day_part  = day_time[:match.start()].strip().rstrip('at').strip()
+        return day_part, time_part
+    return day_time, ""
+
+
+def wrap_club_name(name: str, max_chars: int = 13) -> tuple:
+    """
+    Split club name into up to two lines for the yellow bubble.
+    Returns (line1, line2) where line2 may be empty.
+    Tries to split at a word boundary before max_chars.
+    """
+    upper = name.upper()
+    if len(upper) <= max_chars:
+        return upper, ""
+    words = upper.split()
+    line1, line2 = "", ""
+    for word in words:
+        test = f"{line1} {word}".strip()
+        if len(test) <= max_chars:
+            line1 = test
+        else:
+            line2 = f"{line2} {word}".strip()
+    return line1, line2
+
+
 # -- Step 3: QR Code -----------------------------------------------------------
 
-def generate_qr(zeffy_url):
-    import qrcode
-    from qrcode.constants import ERROR_CORRECT_H
+def generate_qr(registration_url: str) -> Image.Image:
     qr = qrcode.QRCode(
         version=None,
         error_correction=ERROR_CORRECT_H,
         box_size=10,
         border=2,
     )
-    qr.add_data(zeffy_url)
+    qr.add_data(registration_url)
     qr.make(fit=True)
-    from PIL import Image
     img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
     img = img.resize((QR_SIZE, QR_SIZE), Image.LANCZOS)
     return img
@@ -83,65 +157,73 @@ def generate_qr(zeffy_url):
 
 # -- Step 4: Flyer -------------------------------------------------------------
 
-def generate_flyer(club, zeffy_url, qr_img):
-    from PIL import Image, ImageDraw, ImageFont
-
+def generate_flyer(club: dict, registration_url: str, qr_img: Image.Image) -> bytes:
     if not TEMPLATE_PATH.exists():
+        files = list(STATIC_DIR.iterdir()) if STATIC_DIR.exists() else ["static/ dir missing"]
         raise FileNotFoundError(
             f"flyer_template.png not found at {TEMPLATE_PATH}. "
-            f"Files in static/: {list(STATIC_DIR.iterdir()) if STATIC_DIR.exists() else 'static/ dir missing'}"
+            f"Files in static/: {files}"
         )
 
     flyer = Image.open(TEMPLATE_PATH).convert("RGBA")
     draw  = ImageDraw.Draw(flyer)
+    img_w = flyer.width
 
-    if FONT_BOLD.exists():
-        font_club     = ImageFont.truetype(str(FONT_BOLD), CLUB_NAME_FONT_SIZE)
-        font_datetime = ImageFont.truetype(str(FONT_BOLD), DATETIME_FONT_SIZE)
+    # Load fonts
+    f_club   = load_font(FONT_BOLD,    CLUB_NAME_FONT_SIZE)
+    f_day    = load_font(FONT_BOLD,    DAY_FONT_SIZE)
+    f_time   = load_font(FONT_REGULAR, TIME_FONT_SIZE)
+    f_city   = load_font(FONT_BOLD,    CITY_FONT_SIZE)
+    f_body   = load_font(FONT_REGULAR, BODY_CLUB_FONT_SIZE)
+    f_bottom = load_font(FONT_BOLD,    BOTTOM_FONT_SIZE)
+
+    def tw(text, font):
+        bbox = draw.textbbox((0, 0), text, font=font)
+        return bbox[2] - bbox[0]
+
+    # ── Yellow bubble: Club name (centered, up to 2 lines) ──
+    line1, line2 = wrap_club_name(club["club_name"])
+    l1_x = BUBBLE_CENTER_X - tw(line1, f_club) // 2
+    draw.text((l1_x, CLUB_NAME_L1_Y), line1, font=f_club, fill=COLOR_DARK)
+    if line2:
+        l2_x = BUBBLE_CENTER_X - tw(line2, f_club) // 2
+        draw.text((l2_x, CLUB_NAME_L2_Y), line2, font=f_club, fill=COLOR_DARK)
+        day_y = CLUB_NAME_L2_Y + CLUB_NAME_FONT_SIZE + 10
     else:
-        font_club = font_datetime = ImageFont.load_default()
+        day_y = CLUB_NAME_L2_Y
 
-    if FONT_REGULAR.exists():
-        font_bottom = ImageFont.truetype(str(FONT_REGULAR), BOTTOM_TEXT_FONT_SIZE)
-    else:
-        font_bottom = ImageFont.load_default()
+    # ── Yellow bubble: Day ──
+    day_part, time_part = split_day_time(club["day_time"])
+    draw.text((DAY_XY[0], day_y), day_part, font=f_day, fill=COLOR_DARK)
 
-    # Club name
-    words = club["club_name"].upper().split()
-    lines, current = [], ""
-    for word in words:
-        test = f"{current} {word}".strip()
-        bbox = draw.textbbox((0, 0), test, font=font_club)
-        if bbox[2] > MAX_TEXT_WIDTH and current:
-            lines.append(current)
-            current = word
-        else:
-            current = test
-    if current:
-        lines.append(current)
-    x, y = CLUB_NAME_XY
-    for line in lines:
-        draw.text((x, y), line, font=font_club, fill=COLOR_DARK)
-        y += font_club.size + 8
+    # ── Small bubble: Time ──
+    if time_part:
+        draw.text(TIME_XY, time_part, font=f_time, fill=COLOR_DARK)
 
-    # Date/time
-    draw.text(DATETIME_XY, club["day_time"], font=font_datetime, fill=COLOR_DARK)
+    # ── Teal banner: City (after "WE CAN HELP") ──
+    city = extract_city(club["address"])
+    if city:
+        draw.text(CITY_XY, f", {city.upper()}", font=f_city, fill=COLOR_WHITE)
 
-    # Bottom section
-    draw.text(BOTTOM_DATETIME_XY, club["day_time"], font=font_bottom, fill=COLOR_GOLD)
-    draw.text(BOTTOM_ADDRESS_XY,  club["address"],  font=font_bottom, fill=COLOR_GOLD)
+    # ── Body text: Club name after "Come join" ──
+    draw.text(BODY_CLUB_XY, club["club_name"], font=f_body, fill=COLOR_WHITE)
 
-    # QR code
+    # ── Bottom section: Day/time and address ──
+    draw.text(BOTTOM_DATETIME_XY, club["day_time"], font=f_bottom, fill=COLOR_GOLD)
+    draw.text(BOTTOM_ADDRESS_XY,  club["address"],  font=f_bottom, fill=COLOR_GOLD)
+
+    # ── QR code ──
     flyer.paste(qr_img, QR_XY)
 
+    # Convert to PNG bytes
     buf = io.BytesIO()
     flyer.convert("RGB").save(buf, format="PNG", optimize=True)
     return buf.getvalue()
 
 
-# -- Step 5: Facebook ----------------------------------------------------------
+# -- Step 5: Facebook Post -----------------------------------------------------
 
-def post_to_facebook(flyer_bytes, club, zeffy_url):
+def post_to_facebook(flyer_bytes: bytes, club: dict, registration_url: str) -> str:
     page_token = os.environ["FACEBOOK_PAGE_TOKEN"]
     page_id    = os.environ["FACEBOOK_PAGE_ID"]
 
@@ -149,7 +231,7 @@ def post_to_facebook(flyer_bytes, club, zeffy_url):
         f"You are invited! Join us at {club['club_name']}!\n\n"
         f"Meeting: {club['day_time']}\n"
         f"Location: {club['address']}\n\n"
-        f"Register here: {zeffy_url}\n\n"
+        f"Register here: {registration_url}\n\n"
         f"#Toastmasters #District31 #PublicSpeaking #Leadership"
     )
 
@@ -195,21 +277,29 @@ class handler(BaseHTTPRequestHandler):
             length  = int(self.headers.get("Content-Length", 0))
             payload = json.loads(self.rfile.read(length).decode())
 
-            zeffy_url = payload["zeffy_url"]
-            club      = payload["club"]
+            registration_url = payload["zeffy_url"]  # may be Zeffy or Free Toast Host
+            club             = payload["club"]
 
-            qr_img      = generate_qr(zeffy_url)
-            flyer_bytes = generate_flyer(club, zeffy_url, qr_img)
+            qr_img      = generate_qr(registration_url)
+            flyer_bytes = generate_flyer(club, registration_url, qr_img)
             flyer_b64   = base64.b64encode(flyer_bytes).decode()
-            fb_url      = post_to_facebook(flyer_bytes, club, zeffy_url)
+            fb_url      = post_to_facebook(flyer_bytes, club, registration_url)
 
-            self._respond(200, {"ok": True, "flyer_b64": flyer_b64, "facebook_url": fb_url})
+            self._respond(200, {
+                "ok":          True,
+                "flyer_b64":   flyer_b64,
+                "facebook_url": fb_url,
+            })
 
         except Exception as e:
             err_msg = str(e)
             tb      = traceback.format_exc()
             if "token" in err_msg.lower() or "oauth" in err_msg.lower() or "190" in err_msg:
-                err_msg += " — Facebook token may be expired. Regenerate in Meta Developer Portal and update FACEBOOK_PAGE_TOKEN in Vercel."
+                err_msg += (
+                    " — Facebook token may be expired. "
+                    "Regenerate in Meta Developer Portal and update "
+                    "FACEBOOK_PAGE_TOKEN in Vercel environment variables."
+                )
             self._respond(500, {"ok": False, "error": err_msg, "traceback": tb})
 
     def _respond(self, status, data):
