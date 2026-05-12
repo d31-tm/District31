@@ -10,24 +10,30 @@ Vercel environment variables required:
   FACEBOOK_PAGE_ID     — Numeric Facebook Page ID
 
 Static assets (committed to repo under fb-agent/static/):
-  flyer_template.png      — 1824x2358 blank template (Gemini/Canva export)
+  flyer_template.png      — 1824x2358 blank template
   Montserrat-Bold.ttf     — Font for club name, day, city, bottom text
-  Montserrat-Regular.ttf  — Font for body text and time
+  Montserrat-Regular.ttf  — Font for time and body text
 
 TEXT COORDINATES — calibrated for 1824x2358 px template
-  If template dimensions or layout ever change, recalibrate these.
-
-  BUBBLE_CENTER_X    = 620   -- center x of large yellow bubble
-  CLUB_NAME_L1_Y     = 390   -- "CLIPPER CITY" line
-  CLUB_NAME_L2_Y     = 490   -- "CLUB" line (if wraps)
-  DAY_XY             = (350, 610)
+  BUBBLE_CENTER_X    = 620
+  CLUB_NAME_L1_Y     = 390
+  CLUB_NAME_L2_Y     = 490
+  CLUB_NAME_FONT_SIZE = 90
+  DAY_XY             = (350, 610)  -- adjusted down if club name is 2 lines
+  DAY_FONT_SIZE      = 65
   TIME_XY            = (950, 700)
-  CITY_XY            = (1150, 1020)  -- after "WE CAN HELP"
-  BODY_CLUB_XY       = (278, 1178)   -- after "Come join " in body text
+  TIME_FONT_SIZE     = 50
+  CITY_XY            = (1150, 1020)
+  CITY_FONT_SIZE     = 90
+  BODY_CLUB_XY       = (278, 1178)
+  BODY_CLUB_FONT_SIZE = 38
   BOTTOM_DATETIME_XY = (150, 1910)
-  BOTTOM_ADDRESS_XY  = (150, 2000)
-  QR_XY              = (1420, 1950)  -- top-left of QR paste zone
+  BOTTOM_ADDRESS_XY  = (150, 1990)
+  BOTTOM_ADDRESS2_XY = (150, 2070)
+  BOTTOM_FONT_SIZE   = 66
+  QR_XY              = (1420, 1950)
   QR_SIZE            = 350
+  BOTTOM_TEXT_MAX_W  = 1050  -- max width before address wraps
 """
 
 import os
@@ -54,29 +60,31 @@ FONT_REGULAR  = STATIC_DIR / "Montserrat-Regular.ttf"
 
 # -- Layout constants (1824x2358 template) -------------------------------------
 
-BUBBLE_CENTER_X    = 620
-CLUB_NAME_L1_Y     = 390
-CLUB_NAME_L2_Y     = 490
+BUBBLE_CENTER_X     = 620
+CLUB_NAME_L1_Y      = 390
+CLUB_NAME_L2_Y      = 490
 CLUB_NAME_FONT_SIZE = 90
-DAY_XY             = (350, 610)
-DAY_FONT_SIZE      = 65
-TIME_XY            = (950, 700)
-TIME_FONT_SIZE     = 50
-CITY_XY            = (1150, 1020)
-CITY_FONT_SIZE     = 90
-BODY_CLUB_XY       = (278, 1178)
+DAY_XY              = (350, 610)
+DAY_FONT_SIZE       = 65
+TIME_XY             = (950, 700)
+TIME_FONT_SIZE      = 50
+CITY_XY             = (1150, 1020)
+CITY_FONT_SIZE      = 90
+BODY_CLUB_XY        = (278, 1178)
 BODY_CLUB_FONT_SIZE = 38
-BOTTOM_DATETIME_XY = (150, 1910)
-BOTTOM_ADDRESS_XY  = (150, 2000)
-BOTTOM_FONT_SIZE   = 66
-QR_XY              = (1420, 1950)
-QR_SIZE            = 350
+BOTTOM_DATETIME_XY  = (150, 1910)
+BOTTOM_ADDRESS_XY   = (150, 1990)
+BOTTOM_ADDRESS2_XY  = (150, 2070)
+BOTTOM_FONT_SIZE    = 66
+BOTTOM_TEXT_MAX_W   = 1050
+QR_XY               = (1420, 1950)
+QR_SIZE             = 350
 
 # -- Colors --------------------------------------------------------------------
 
-COLOR_DARK   = (30,  30,  30)
-COLOR_WHITE  = (255, 255, 255)
-COLOR_GOLD   = (212, 175, 55)
+COLOR_DARK  = (30,  30,  30)
+COLOR_WHITE = (255, 255, 255)
+COLOR_GOLD  = (212, 175, 55)
 
 # -- Facebook ------------------------------------------------------------------
 
@@ -84,7 +92,7 @@ FB_API_VERSION = "v18.0"
 FB_GRAPH_BASE  = f"https://graph.facebook.com/{FB_API_VERSION}"
 
 
-# -- Helpers -------------------------------------------------------------------
+# -- Text helpers --------------------------------------------------------------
 
 def load_font(path: Path, size: int) -> ImageFont.FreeTypeFont:
     if path.exists():
@@ -92,23 +100,28 @@ def load_font(path: Path, size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.load_default(size=size)
 
 
+def text_width(draw, text: str, font) -> int:
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return bbox[2] - bbox[0]
+
+
 def extract_city(address: str) -> str:
-    """Extract city from address string e.g. '6 Chestnut St, Amesbury, MA 01913' -> 'Amesbury'"""
+    """Extract city from 'Street, City, ST ZIP' format."""
     parts = [p.strip() for p in address.split(",")]
     if len(parts) >= 2:
-        # Second-to-last part is typically the city
         return parts[-2].strip()
     return ""
 
 
 def split_day_time(day_time: str):
     """
-    Split a day/time string into (day_part, time_part).
-    Examples:
-      'Friday at 12:00 pm'              -> ('Friday', '12:00 pm')
-      '2nd & 4th Wednesday 6:45 pm'     -> ('2nd & 4th Wednesday', '6:45 pm')
-      'Thursday 6:15 PM to 7:45 PM'     -> ('Thursday', '6:15 PM to 7:45 PM')
-      '2nd and 4th Wednesday 12:00 pm - 1:00 pm' -> ('2nd and 4th Wednesday', '12:00 pm - 1:00 pm')
+    Split day/time string into (day_part, time_part).
+    Handles formats like:
+      'Friday at 12:00 pm'
+      '2nd & 4th Wednesday 6:45 pm'
+      'Thursday 6:15 PM to 7:45 PM'
+      '2nd and 4th Wednesday 12:00 pm - 1:00 pm'
+      'Wednesday 7:00 pm'
     """
     pattern = r'(\d{1,2}:\d{2}\s*(?:am|pm|AM|PM|a\.m\.|p\.m\.)(?:\s*(?:to|-)\s*\d{1,2}:\d{2}\s*(?:am|pm|AM|PM|a\.m\.|p\.m\.)?)?)'
     match = re.search(pattern, day_time, re.IGNORECASE)
@@ -119,12 +132,8 @@ def split_day_time(day_time: str):
     return day_time, ""
 
 
-def wrap_club_name(name: str, max_chars: int = 13) -> tuple:
-    """
-    Split club name into up to two lines for the yellow bubble.
-    Returns (line1, line2) where line2 may be empty.
-    Tries to split at a word boundary before max_chars.
-    """
+def wrap_club_name(name: str, max_chars: int = 13):
+    """Split club name into up to 2 lines for yellow bubble."""
     upper = name.upper()
     if len(upper) <= max_chars:
         return upper, ""
@@ -137,6 +146,19 @@ def wrap_club_name(name: str, max_chars: int = 13) -> tuple:
         else:
             line2 = f"{line2} {word}".strip()
     return line1, line2
+
+
+def wrap_address(draw, address: str, font, max_width: int):
+    """Split address at word boundary to fit within max_width."""
+    if text_width(draw, address, font) <= max_width:
+        return address, ""
+    words = address.split(" ")
+    for i in range(len(words) - 1, 0, -1):
+        line1 = " ".join(words[:i])
+        line2 = " ".join(words[i:])
+        if text_width(draw, line1, font) <= max_width:
+            return line1, line2
+    return address, ""
 
 
 # -- Step 3: QR Code -----------------------------------------------------------
@@ -167,7 +189,6 @@ def generate_flyer(club: dict, registration_url: str, qr_img: Image.Image) -> by
 
     flyer = Image.open(TEMPLATE_PATH).convert("RGBA")
     draw  = ImageDraw.Draw(flyer)
-    img_w = flyer.width
 
     # Load fonts
     f_club   = load_font(FONT_BOLD,    CLUB_NAME_FONT_SIZE)
@@ -177,16 +198,12 @@ def generate_flyer(club: dict, registration_url: str, qr_img: Image.Image) -> by
     f_body   = load_font(FONT_REGULAR, BODY_CLUB_FONT_SIZE)
     f_bottom = load_font(FONT_BOLD,    BOTTOM_FONT_SIZE)
 
-    def tw(text, font):
-        bbox = draw.textbbox((0, 0), text, font=font)
-        return bbox[2] - bbox[0]
-
     # ── Yellow bubble: Club name (centered, up to 2 lines) ──
     line1, line2 = wrap_club_name(club["club_name"])
-    l1_x = BUBBLE_CENTER_X - tw(line1, f_club) // 2
+    l1_x = BUBBLE_CENTER_X - text_width(draw, line1, f_club) // 2
     draw.text((l1_x, CLUB_NAME_L1_Y), line1, font=f_club, fill=COLOR_DARK)
     if line2:
-        l2_x = BUBBLE_CENTER_X - tw(line2, f_club) // 2
+        l2_x = BUBBLE_CENTER_X - text_width(draw, line2, f_club) // 2
         draw.text((l2_x, CLUB_NAME_L2_Y), line2, font=f_club, fill=COLOR_DARK)
         day_y = CLUB_NAME_L2_Y + CLUB_NAME_FONT_SIZE + 10
     else:
@@ -200,22 +217,25 @@ def generate_flyer(club: dict, registration_url: str, qr_img: Image.Image) -> by
     if time_part:
         draw.text(TIME_XY, time_part, font=f_time, fill=COLOR_DARK)
 
-    # ── Teal banner: City (after "WE CAN HELP") ──
+    # ── Teal banner: City after "WE CAN HELP" ──
     city = extract_city(club["address"])
     if city:
         draw.text(CITY_XY, f", {city.upper()}", font=f_city, fill=COLOR_WHITE)
 
     # ── Body text: Club name after "Come join" ──
+    # Template has baked-in "!" after the blank zone — draw club name at consistent size
     draw.text(BODY_CLUB_XY, club["club_name"], font=f_body, fill=COLOR_WHITE)
 
-    # ── Bottom section: Day/time and address ──
+    # ── Bottom section: Day/time and address (wrapped if long) ──
     draw.text(BOTTOM_DATETIME_XY, club["day_time"], font=f_bottom, fill=COLOR_GOLD)
-    draw.text(BOTTOM_ADDRESS_XY,  club["address"],  font=f_bottom, fill=COLOR_GOLD)
+    addr_line1, addr_line2 = wrap_address(draw, club["address"], f_bottom, BOTTOM_TEXT_MAX_W)
+    draw.text(BOTTOM_ADDRESS_XY, addr_line1, font=f_bottom, fill=COLOR_GOLD)
+    if addr_line2:
+        draw.text(BOTTOM_ADDRESS2_XY, addr_line2, font=f_bottom, fill=COLOR_GOLD)
 
     # ── QR code ──
     flyer.paste(qr_img, QR_XY)
 
-    # Convert to PNG bytes
     buf = io.BytesIO()
     flyer.convert("RGB").save(buf, format="PNG", optimize=True)
     return buf.getvalue()
@@ -277,7 +297,7 @@ class handler(BaseHTTPRequestHandler):
             length  = int(self.headers.get("Content-Length", 0))
             payload = json.loads(self.rfile.read(length).decode())
 
-            registration_url = payload["zeffy_url"]  # may be Zeffy or Free Toast Host
+            registration_url = payload["zeffy_url"]
             club             = payload["club"]
 
             qr_img      = generate_qr(registration_url)
@@ -286,8 +306,8 @@ class handler(BaseHTTPRequestHandler):
             fb_url      = post_to_facebook(flyer_bytes, club, registration_url)
 
             self._respond(200, {
-                "ok":          True,
-                "flyer_b64":   flyer_b64,
+                "ok":           True,
+                "flyer_b64":    flyer_b64,
                 "facebook_url": fb_url,
             })
 
