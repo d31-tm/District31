@@ -282,10 +282,16 @@ def generate_flyer(club: dict, registration_url: str, qr_img: Image.Image) -> by
     day_part, time_part = split_day_time(club["day_time"])
     draw.text((DAY_XY[0], day_y), day_part, font=f_day, fill=COLOR_DARK)
 
-    # ── Small bubble: Time (dynamic font size) ──
+    # ── Small bubble: Time (centered, dynamic font size) ──
+    # Bubble spans x:870-1150 (width 280px), center x:1010, y:680
     if time_part:
-        f_time_dyn, _ = fit_font(draw, time_part, 350, FONT_REGULAR, TIME_FONT_SIZE, min_size=20)
-        draw.text(TIME_XY, time_part, font=f_time_dyn, fill=COLOR_DARK)
+        bubble_left, bubble_right, time_y = 870, 1150, 680
+        bubble_width = bubble_right - bubble_left
+        bubble_center_x = (bubble_left + bubble_right) // 2
+        f_time_dyn, _ = fit_font(draw, time_part, bubble_width - 20, FONT_REGULAR, TIME_FONT_SIZE, min_size=18)
+        time_w = text_width(draw, time_part, f_time_dyn)
+        time_x = bubble_center_x - time_w // 2
+        draw.text((time_x, time_y), time_part, font=f_time_dyn, fill=COLOR_DARK)
 
     # ── Teal banner: City after "WE CAN HELP" (dynamic font size) ──
     city = extract_city(club["address"])
@@ -294,9 +300,30 @@ def generate_flyer(club: dict, registration_url: str, qr_img: Image.Image) -> by
         f_city_dyn, _ = fit_font(draw, city_str, 600, FONT_BOLD, CITY_FONT_SIZE, min_size=30)
         draw.text(CITY_XY, city_str, font=f_city_dyn, fill=COLOR_WHITE)
 
-    # ── Body text: Club name after "Come join" ──
-    # Template has baked-in "!" after the blank zone — draw club name at consistent size
-    draw.text(BODY_CLUB_XY, club["club_name"], font=f_body, fill=COLOR_WHITE)
+    # ── Body text: Paint over baked-in text and rewrite full paragraph ──
+    # Paint over the entire body text zone with teal background
+    TEAL = (16, 91, 123)
+    draw.rectangle([50, 1155, 1780, 1460], fill=TEAL)
+    # Rewrite full paragraph with club name naturally flowing in
+    body_text = f"Come join {club['club_name']}! Toastmasters is a 100-year-old proven program for building confident speakers and community leaders through real-time, peer-supported experiential learning. Join us to find out more."
+    body_font = load_font(FONT_REGULAR, BODY_CLUB_FONT_SIZE)
+    body_max_w = 1780 - 65
+    body_words = body_text.split()
+    body_lines, current = [], ""
+    for word in body_words:
+        test = f"{current} {word}".strip()
+        if text_width(draw, test, body_font) <= body_max_w:
+            current = test
+        else:
+            body_lines.append(current)
+            current = word
+    if current:
+        body_lines.append(current)
+    body_y = 1170
+    body_line_h = BODY_CLUB_FONT_SIZE + 14
+    for line in body_lines:
+        draw.text((65, body_y), line, font=body_font, fill=COLOR_WHITE)
+        body_y += body_line_h
 
     # ── Bottom section: Day/time and address (dynamic font + multi-line) ──
     draw.text(BOTTOM_DATETIME_XY, club["day_time"], font=f_bottom, fill=COLOR_GOLD)
