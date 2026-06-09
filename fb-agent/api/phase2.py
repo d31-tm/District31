@@ -26,7 +26,7 @@ TEXT COORDINATES — calibrated for 1824x2358 px template
   CITY_XY            = (1150, 1020)
   CITY_FONT_SIZE     = 90
   BODY_CLUB_XY       = (278, 1178)
-  BODY_CLUB_FONT_SIZE = 28
+  BODY_CLUB_FONT_SIZE = 44
   BOTTOM_DATETIME_XY = (150, 1910)
   BOTTOM_ADDRESS_XY  = (150, 1990)
   BOTTOM_ADDRESS2_XY = (150, 2070)
@@ -71,7 +71,7 @@ TIME_FONT_SIZE      = 50
 CITY_XY             = (1150, 1020)
 CITY_FONT_SIZE      = 90
 BODY_CLUB_XY        = (278, 1178)
-BODY_CLUB_FONT_SIZE = 28
+BODY_CLUB_FONT_SIZE = 44
 BOTTOM_DATETIME_XY  = (150, 1910)
 BOTTOM_ADDRESS_XY   = (150, 1990)
 BOTTOM_ADDRESS2_XY  = (150, 2070)
@@ -267,25 +267,77 @@ def generate_flyer(club: dict, registration_url: str, qr_img: Image.Image) -> by
     f_body   = load_font(FONT_REGULAR, BODY_CLUB_FONT_SIZE)
     f_bottom = load_font(FONT_BOLD,    BOTTOM_FONT_SIZE)
 
-    # ── Yellow bubble: Club name (centered, up to 2 lines) ──
-    line1, line2 = wrap_club_name(club["club_name"])
-    l1_x = BUBBLE_CENTER_X - text_width(draw, line1, f_club) // 2
-    draw.text((l1_x, CLUB_NAME_L1_Y), line1, font=f_club, fill=COLOR_DARK)
-    if line2:
-        l2_x = BUBBLE_CENTER_X - text_width(draw, line2, f_club) // 2
-        draw.text((l2_x, CLUB_NAME_L2_Y), line2, font=f_club, fill=COLOR_DARK)
-        day_y = CLUB_NAME_L2_Y + CLUB_NAME_FONT_SIZE + 10
-    else:
-        day_y = CLUB_NAME_L2_Y
+    # ── Yellow bubble: Club name + day (fully dynamic sizing) ──
+    # Bubble measured safe width: 650px, center x: 621
+    # Available height y:395-660 = 265px (below YOU ARE INVITED)
+    BUBBLE_SAFE_W       = 650
+    BUBBLE_CENTER_X_DYN = 621
+    BUBBLE_TOP_Y        = 395
+    BUBBLE_BOTTOM_Y     = 660
 
-    # ── Yellow bubble: Day ──
     day_part, time_part = split_day_time(club["day_time"])
-    draw.text((DAY_XY[0], day_y), day_part, font=f_day, fill=COLOR_DARK)
+    upper    = club["club_name"].upper()
+    bubble_h = BUBBLE_BOTTOM_Y - BUBBLE_TOP_Y
+
+    best_lines, best_size, best_f_club, best_f_day = [upper], 36, f_club, f_day
+    for size in range(CLUB_NAME_FONT_SIZE, 35, -2):
+        fc = load_font(FONT_BOLD, size)
+        fd = load_font(FONT_BOLD, max(size - 10, 44))
+        lh = size + 8
+        dh = fd.size + 8
+        words = upper.split()
+
+        if text_width(draw, upper, fc) <= BUBBLE_SAFE_W:
+            if lh + dh <= bubble_h:
+                best_lines, best_size, best_f_club, best_f_day = [upper], size, fc, fd
+                break
+
+        found = False
+        for split in range(1, len(words)):
+            l1 = " ".join(words[:split])
+            l2 = " ".join(words[split:])
+            if text_width(draw, l1, fc) <= BUBBLE_SAFE_W and text_width(draw, l2, fc) <= BUBBLE_SAFE_W:
+                if 2 * lh + dh <= bubble_h:
+                    best_lines, best_size, best_f_club, best_f_day = [l1, l2], size, fc, fd
+                    found = True
+                break
+        if found:
+            break
+
+        found = False
+        for s1 in range(1, len(words) - 1):
+            for s2 in range(s1 + 1, len(words)):
+                l1 = " ".join(words[:s1])
+                l2 = " ".join(words[s1:s2])
+                l3 = " ".join(words[s2:])
+                if (text_width(draw, l1, fc) <= BUBBLE_SAFE_W and
+                    text_width(draw, l2, fc) <= BUBBLE_SAFE_W and
+                    text_width(draw, l3, fc) <= BUBBLE_SAFE_W):
+                    if 3 * lh + dh <= bubble_h:
+                        best_lines, best_size, best_f_club, best_f_day = [l1, l2, l3], size, fc, fd
+                        found = True
+                    break
+            if found:
+                break
+        if found:
+            break
+
+    lh      = best_size + 8
+    total_h = len(best_lines) * lh + best_f_day.size + 8
+    start_y = BUBBLE_TOP_Y + (bubble_h - total_h) // 2
+
+    for i, line in enumerate(best_lines):
+        lx = BUBBLE_CENTER_X_DYN - text_width(draw, line, best_f_club) // 2
+        draw.text((lx, start_y + i * lh), line, font=best_f_club, fill=COLOR_DARK)
+
+    day_y = start_y + len(best_lines) * lh + 5
+    day_x = BUBBLE_CENTER_X_DYN - text_width(draw, day_part, best_f_day) // 2
+    draw.text((day_x, day_y), day_part, font=best_f_day, fill=COLOR_DARK)
 
     # ── Small bubble: Time (centered, dynamic font size) ──
     # Bubble spans x:870-1150 (width 280px), center x:1010, y:680
     if time_part:
-        bubble_left, bubble_right, time_y = 870, 1150, 680
+        bubble_left, bubble_right, time_y = 870, 1150, 700
         bubble_width = bubble_right - bubble_left
         bubble_center_x = (bubble_left + bubble_right) // 2
         f_time_dyn, _ = fit_font(draw, time_part, bubble_width - 20, FONT_REGULAR, TIME_FONT_SIZE, min_size=18)
